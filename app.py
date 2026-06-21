@@ -29,40 +29,35 @@ def parse_guess(raw: str):
     return True, value, None
 
 
-def check_guess(guess, secret):
-    if guess == secret:
+def check_guess(guess_int: int, secret: int):
+    # FIXME: Logic breaks here — returns a tuple (outcome, message).
+    # Tests and refactored logic expect a single outcome string.
+    if guess_int == secret:
         return "Win", "🎉 Correct!"
-
-    try:
-        if guess > secret:
-            return "Too High", "📈 Go HIGHER!"
-        else:
-            return "Too Low", "📉 Go LOWER!"
-    except TypeError:
-        g = str(guess)
-        if g == secret:
-            return "Win", "🎉 Correct!"
-        if g > secret:
-            return "Too High", "📈 Go HIGHER!"
-        return "Too Low", "📉 Go LOWER!"
+    elif guess_int > secret:
+        return "Too High", "📈 Go LOWER!"
+    else:
+        return "Too Low", "📉 Go HIGHER!"
 
 
 def update_score(current_score: int, outcome: str, attempt_number: int):
     if outcome == "Win":
-        points = 100 - 10 * (attempt_number + 1)
-        if points < 10:
-            points = 10
-        return current_score + points
+       points = 0 
+    else:
+        points = -10
+    if current_score < 10:
+        points += 10
 
-    if outcome == "Too High":
-        if attempt_number % 2 == 0:
-            return current_score + 5
-        return current_score - 5
+    return current_score + points
 
-    if outcome == "Too Low":
-        return current_score - 5
-
-    return current_score
+# FIX: Import canonical logic from logic_utils.py (user + agent)
+# User identified logic duplication, agent refactored into single source of truth
+from logic_utils import (
+    get_range_for_difficulty,
+    parse_guess,
+    check_guess,
+    update_score,
+)
 
 st.set_page_config(page_title="Glitchy Guesser", page_icon="🎮")
 
@@ -96,7 +91,7 @@ if "attempts" not in st.session_state:
     st.session_state.attempts = 1
 
 if "score" not in st.session_state:
-    st.session_state.score = 0
+    st.session_state.score =100
 
 if "status" not in st.session_state:
     st.session_state.status = "playing"
@@ -106,6 +101,7 @@ if "history" not in st.session_state:
 
 st.subheader("Make a guess")
 
+# FIXME: Logic breaks here — hard-coded range text; should use `low`/`high`.
 st.info(
     f"Guess a number between 1 and 100. "
     f"Attempts left: {attempt_limit - st.session_state.attempts}"
@@ -123,6 +119,9 @@ raw_guess = st.text_input(
     key=f"guess_input_{difficulty}"
 )
 
+# FIXME: Logic breaks here — widget key tied only to `difficulty`, which can
+# cause Streamlit to reuse widget state across games/difficulties.
+
 col1, col2, col3 = st.columns(3)
 with col1:
     submit = st.button("Submit Guess 🚀")
@@ -132,10 +131,17 @@ with col3:
     show_hint = st.checkbox("Show hint", value=True)
 
 if new_game:
+    # 1st bug: change the attempt limit based on difficulty
+    # FIXME: Logic breaks here — attempts reset to 0 (off-by-one). Should start at 1.
     st.session_state.attempts = 0
-    st.session_state.secret = random.randint(1, 100)
+    # 2nd bug: reset the secret base on the low and high of the difficulty
+    st.session_state.secret = random.randint(low,high)
+    # FIX: Reset history on new game (user identified persistence bug, agent added fix)
+    st.session_state.history = []
+    st.session_state.status = "playing"
     st.success("New game started.")
     st.rerun()
+    
 
 if st.session_state.status != "playing":
     if st.session_state.status == "won":
@@ -145,8 +151,6 @@ if st.session_state.status != "playing":
     st.stop()
 
 if submit:
-    st.session_state.attempts += 1
-
     ok, guess_int, err = parse_guess(raw_guess)
 
     if not ok:
@@ -154,13 +158,19 @@ if submit:
         st.error(err)
     else:
         st.session_state.history.append(guess_int)
+        secret = st.session_state.secret
+        st.session_state.attempts += 1
 
-        if st.session_state.attempts % 2 == 0:
-            secret = str(st.session_state.secret)
+        # FIX: Map single outcome string to message (user caught tuple/string mismatch)
+        # Agent traced root cause: tests expected string, app unpacked tuple
+        outcome = check_guess(guess_int, secret)
+
+        if outcome == "Win":
+            message = "🎉 Correct!"
+        elif outcome == "Too High":
+            message = "📈 Go LOWER!"
         else:
-            secret = st.session_state.secret
-
-        outcome, message = check_guess(guess_int, secret)
+            message = "📉 Go HIGHER!"
 
         if show_hint:
             st.warning(message)
@@ -179,7 +189,7 @@ if submit:
                 f"Final score: {st.session_state.score}"
             )
         else:
-            if st.session_state.attempts >= attempt_limit:
+            if st.session_state.attempts > attempt_limit:
                 st.session_state.status = "lost"
                 st.error(
                     f"Out of attempts! "
